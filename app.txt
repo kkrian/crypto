@@ -1,0 +1,107 @@
+# backend.py
+
+from flask import Flask, request, jsonify
+import time
+import hashlib
+import matplotlib.image as img
+import numpy as np
+import base64
+
+
+app = Flask(__name__)
+def lorenz_key(xinit, yinit, zinit, num_steps):
+    dt = 0.01
+    xs = np.empty(num_steps + 1)
+    ys = np.empty(num_steps + 1)
+    zs = np.empty(num_steps + 1)
+
+    xs[0], ys[0], zs[0] = (xinit, yinit, zinit)
+    s = 10
+    r = 28
+    b = 2.667
+
+    for i in range(num_steps):
+        xs[i + 1] = xs[i] + (s * (ys[i] - xs[i]) * dt)
+        ys[i + 1] = ys[i] + (xs[i] * (r - zs[i]) - ys[i]) * dt
+        zs[i + 1] = zs[i] + (xs[i] * ys[i] - b * zs[i]) * dt
+
+    return xs[1:], ys[1:], zs[1:]  
+
+def xor_image(image, keys, timestamp):
+    height, width, _ = image.shape
+    encrypted_image = np.zeros_like(image)
+    idx = 0
+    for i in range(height):
+        for j in range(width):
+            zk = int((keys[idx] * (10**5)) % 256)
+            encrypted_image[i, j] = image[i, j] ^ zk ^ timestamp
+            idx += 1
+            if idx >= len(keys):  
+                idx = 0
+    return encrypted_image
+
+# @app.route('/encrypt', methods=['POST'])
+# def encrypt():
+#     # Get image file from request
+#     file = request.files['image']
+#     image = img.imread(file)
+
+#     timestamp = int(time.time())
+#     unique_id = hashlib.sha256(f"{timestamp}_{file.filename}".encode()).hexdigest()
+
+#     xkey, ykey, zkey = lorenz_key(0.01, 0.02, 0.03, image.size // 3)
+#     encrypted_image = xor_image(image, zkey, timestamp)
+
+#     # Save encryption info to a file
+#     with open(f"encryption_info_{unique_id}.txt", "w") as file:
+#         file.write(f"Timestamp: {timestamp}\nUnique ID: {unique_id}\n")
+
+#     # Return encrypted image and unique ID
+#     return jsonify({'encrypted_image': encrypted_image.tolist(), 'unique_id': unique_id})
+
+@app.route('/encrypt', methods=['POST'])
+def encrypt():
+    # Get image file from request
+    file = request.files['image']
+    image = img.imread(file)
+
+    timestamp = int(time.time())
+    unique_id = hashlib.sha256(f"{timestamp}_{file.filename}".encode()).hexdigest()
+
+    xkey, ykey, zkey = lorenz_key(0.01, 0.02, 0.03, image.size // 3)
+    encrypted_image = xor_image(image, zkey, timestamp)
+
+    # Convert encrypted image data to base64
+    encrypted_image_base64 = base64.b64encode(encrypted_image).decode('utf-8')
+
+    # Save encryption info to a file
+    with open(f"encryption_info_{unique_id}.txt", "w") as file:
+        file.write(f"Timestamp: {timestamp}\nUnique ID: {unique_id}\n")
+
+    # Return encrypted image in base64 format and unique ID
+    return jsonify({'encrypted_image': encrypted_image_base64, 'unique_id': unique_id})
+
+@app.route('/decrypt', methods=['POST'])
+def decrypt():
+    # Get encrypted image and unique ID from request
+    data = request.json
+    encrypted_image = np.array(data['encrypted_image'])
+    unique_id = data['unique_id']
+
+    # Load encryption info from file
+    with open(f"encryption_info_{unique_id}.txt", "r") as file:
+        encryption_info = file.read()
+
+    # Extract timestamp from encryption info
+    timestamp = int(encryption_info.split('\n')[0].split(': ')[1])
+
+    # Get keys for decryption
+    xkey, ykey, zkey = lorenz_key(0.01, 0.02, 0.03, encrypted_image.size // 3)
+
+    # Decrypt image
+    decrypted_image = xor_image(encrypted_image, zkey, timestamp)
+
+    return jsonify({'decrypted_image': decrypted_image.tolist()})
+
+if __name__ == '__main__':
+    app.run(debug=True)
